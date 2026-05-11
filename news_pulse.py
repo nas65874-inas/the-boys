@@ -126,3 +126,47 @@ def show_batch_results(batch_number, batch_df, all_df):
         window(col("published_at"), "2 minutes"), col("source")
     ).agg(count("*").alias("headlines"))
     window_counts.orderBy("window", "source").show(truncate=False)
+
+def run_pipeline():
+    spark = SparkSession.builder.appName("NewsPulse").master("local[*]").getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
+
+    news = make_mock_news()
+    news = add_clean_headlines(news)
+
+    # Each list is treated like a small batch arriving later.
+    batches = [
+        news[0:3],
+        news[3:6],
+        news[6:9],
+    ]
+
+    all_news_df = None
+
+    for batch_number, batch in enumerate(batches, 1):
+        batch_df = spark.createDataFrame(batch)
+
+        if all_news_df is None:
+            all_news_df = batch_df
+        else:
+            all_news_df = all_news_df.unionByName(batch_df)
+
+        show_batch_results(batch_number, batch_df, all_news_df)
+
+        # Small pause to make the script feel like micro-batches are arriving.
+        time.sleep(1)
+
+    output_path = "output/news_pulse_source_counts"
+    final_counts = all_news_df.groupBy("source").agg(count("*").alias("headline_count"))
+    final_counts = final_counts.orderBy(desc("headline_count"), "source")
+
+    final_counts.coalesce(1).write.mode("overwrite").option("header", True).csv(
+        output_path
+    )
+
+    print(f"\nSaved final source counts to {output_path}")
+    spark.stop()
+
+
+if __name__ == "__main__":
+    run_pipeline()
