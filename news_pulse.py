@@ -76,4 +76,53 @@ def make_mock_news():
             "published_at": base_time + timedelta(minutes=3, seconds=20),
         },
     ]
-  
+
+def clean_word(word):
+    # Keep only letters and numbers so "AI," and "AI" count as the same word.
+    return re.sub(r"[^a-z0-9]", "", word.lower())
+
+
+def add_clean_headlines(news_rows):
+    cleaned_rows = []
+
+    for row in news_rows:
+        words = row["headline"].split()
+        useful_words = []
+
+        for word in words:
+            word = clean_word(word)
+            if word and word not in STOP_WORDS:
+                useful_words.append(word)
+
+        cleaned_rows.append(
+            {
+                "source": row["source"],
+                "headline": row["headline"],
+                "published_at": row["published_at"],
+                "clean_headline": " ".join(useful_words),
+            }
+        )
+
+    return cleaned_rows
+
+def show_batch_results(batch_number, batch_df, all_df):
+    print(f"\n--- Batch {batch_number} incoming headlines ---")
+    batch_df.select("published_at", "source", "headline").show(truncate=False)
+
+    print("Headlines by source so far")
+    source_counts = all_df.groupBy("source").agg(count("*").alias("headline_count"))
+    source_counts = source_counts.orderBy(desc("headline_count"), "source")
+    source_counts.show(truncate=False)
+
+    print("Trending keywords so far")
+    words = all_df.select(explode(split(lower(col("clean_headline")), " ")).alias("word"))
+    words = words.where(col("word") != "")
+    word_counts = words.groupBy("word").agg(count("*").alias("mentions"))
+    word_counts = word_counts.orderBy(desc("mentions"), "word")
+    word_counts.show(10, truncate=False)
+
+    print("Two-minute window counts")
+    window_counts = all_df.groupBy(
+        window(col("published_at"), "2 minutes"), col("source")
+    ).agg(count("*").alias("headlines"))
+    window_counts.orderBy("window", "source").show(truncate=False)
